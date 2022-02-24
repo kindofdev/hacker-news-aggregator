@@ -1,0 +1,125 @@
+
+Skip to content
+Pull requests
+Issues
+Marketplace
+Explore
+@kindofdev
+kindofdev /
+free-pong-game
+Public
+
+Code
+Issues
+Pull requests
+Actions
+Projects
+Wiki
+Security
+Insights
+
+    Settings
+
+free-pong-game/.gitignore
+@kindofdev
+kindofdev first commit
+Latest commit fadaccc on Jan 7
+History
+1 contributor
+80 lines (63 sloc) 880 Bytes
+.cabal-sandbox/
+cabal.sandbox.config
+cabal.project.local
+.ghc.environment.*
+cabal-dev/
+.hpc/
+*.hi
+*.o
+*.p_hi
+*.prof
+*.tix
+*.log
+dist
+dist-*
+register.sh
+./cabal.config
+cabal-tests.log
+
+/Cabal/dist/
+/Cabal/tests/Setup
+/Cabal/Setup
+/Cabal/source-file-list
+
+/cabal-install/dist/
+/cabal-install/Setup
+/cabal-install/source-file-list
+
+.stylish-haskell.yaml
+.stylish-haskell.yml
+.ghci
+.ghcid
+
+# Output of release and bootstrap
+_build
+
+# editor temp files
+
+*#
+.#*
+*~
+.*.swp
+*.bak
+
+# GHC build
+
+Cabal/GNUmakefile
+Cabal/dist-boot/
+Cabal/dist-install/
+Cabal/ghc.mk
+
+
+# TAGS files
+TAGS
+tags
+ctags
+
+# stack artifacts
+/.stack-work/
+stack.yaml.lock
+
+# Shake artifacts
+.shake*
+progress.txt
+
+# test files
+register.sh
+
+# python artifacts from documentation builds
+*.pyc
+.python-sphinx-virtualenv/
+/doc/.skjold_cache/
+
+# macOS folder metadata
+.DS_Store
+
+# benchmarks
+bench.html
+
+# Emacs
+.projectile
+
+    © 2022 GitHub, Inc.
+
+    Terms
+    Privacy
+    Security
+    Status
+    Docs
+    Contact GitHub
+    Pricing
+    API
+    Training
+    Blog
+    About
+
+Loading complete
