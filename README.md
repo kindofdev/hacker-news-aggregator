@@ -9,7 +9,7 @@ Using the Hacker News API Documentation (https://github.com/HackerNews/API) writ
 
 ## Disclaimer 
 <br />
-This project is not a production-ready one, just an exercise trying to achieve the requirements above, efficiency, performance and readability. In a production context, most probably, I would have made other decisions like using libraries/frameworks. Say a logger library. Also I had used a streaming library/framework for instance **Conduit**, **Kafka**, **Flink** or **Streamly** for example. 
+This project is not a production-ready one, just an exercise trying to achieve the requirements above, efficiency, performance and readability. In a production context, most probably, I would have made other decisions like using libraries/frameworks. Say a logger library. Also I would have used a streaming library/framework for instance **Conduit**, **Kafka**, **Flink** or **Streamly** for example. 
 My intention with current design has been to play with Haskell concurrency primitives and have fun. 
 
 **Hacker News Bug** :  There's an issue with the API (see below details). In these cases the program terminates with an managed error: 
