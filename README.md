@@ -12,7 +12,7 @@ Using the Hacker News API Documentation (https://github.com/HackerNews/API) writ
 This project is not a production-ready one, just an exercise trying to achieve the requirements above, efficiency, performance and readability. In a production context, most probably, I would have made other decisions like using libraries/frameworks. Say a logger library. Also I would have used a streaming library/framework for instance **Conduit**, **Kafka**, **Flink** or **Streamly** for example. 
 My intention with current design has been to play with Haskell concurrency primitives and have fun. 
 
-**Hacker News Bug** :  There's an issue with the API (see below details). In these cases the program terminates with an managed error: 
+**Hacker News Bug** :  There's an issue with the API (see below for details). In these cases the program terminates with a managed error: 
 
 > "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request" 
 
@@ -34,7 +34,7 @@ The application architecture consists on multiple processes forked using `Contro
 
   - Fork the processes: `TopStoriesManager`, `CommentAggregator`, `HttpWorker`s and `Logger`.
   
-  - Wait any of the results provided by `TopStoriesManager` (**Top 30 stories title**) or `CommentAggregator` (**Top 10 Commenter** names and **Total number of comments for the top 30 stories**). 
+  - Wait for any of the results provided by `TopStoriesManager` (**Top 30 stories title**) or `CommentAggregator` (**Top 10 Commenter** names and **Total number of comments for the top 30 stories**). 
   
   - Print each result as it gets computed (don't need to wait to have all the results), and then wait for the second result. 
   
@@ -50,11 +50,11 @@ Its mission is to collect the top 30 story titles.
   
   - Request synchronously the top 30 stories in `/v0/topstories` (note: this service returns 500 stories and jobs, but we are only interested of stories)
 
-  - For the first 30 items (stories or jobs) it triggers 30 requests `GetStory` containing the item ids into channel `ItemReqChan`. (As a spoiler, httpWorkers listen to this channel in order to get the item ids, process the stories and finally put the results into `StoryResChan`).
+  - For the first 30 items (stories or jobs) it triggers 30 requests `GetStory` containing the item ids into channel `ItemReqChan`. (As a spoiler, httpWorkers listen to this channel in order to get the item ids, then process the stories, and finally put the results into `StoryResChan`).
 
-  - Keep a `storyIdsReserve` with the rest (470). (More in next point) 
+  - Keep a `storyIdsReserve` list with the rest (470). (More in next point) 
 
-  - Listen to channel `StoryResChan` where `HttpWorker`s will publish the stories processed. Here, it iterates until collecting 30 processed stories, and finally returns the titles of the top stories. An interesting thing is that because the items ids previously triggered might be **jobs** we need to check whether the story processed is actually a story (**Maybe Story**). So in case of getting a non-story, we'll trigger a new request `GetStory` through `ItemReqChan` getting the itemId from `storyIdsReserve`. This way, we only request just the necessary items, reducing traffic and processing.
+  - Listen to channel `StoryResChan` where `HttpWorker`s will publish the stories processed. Here, it iterates until collecting 30 processed stories, and finally returns the titles of the top stories. An interesting thing is that because the items ids previously triggered might be **jobs** we need to check whether the processed story is actually a story (**Maybe Story**). So in case of getting a non-story, we'll trigger a new request `GetStory` through `ItemReqChan` getting the itemId from `storyIdsReserve`. This way, we only request the necessary items, reducing traffic and processing.
 
   - Before returning the result to `Main`, we need to order the stories collected. For this, first thing we do in first step is to zip the itemIds received with indices [1..], and consequently attach the index in the request. 
 
@@ -71,13 +71,13 @@ Its mission is to collect the top 30 commenter names and count the total comment
   - `CommentAggregator` also listens to `CommentResChan` to get processed comments and aggregate the results (**top 10 commenter names**). Here the logic is as follows. 
      For each comment: 
 
-      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments only from channel `CommentResChan`, but the problem with is that every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, we'll fail and cancel the program due to in that case the final result wouldn't be accurate.
+      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments from channel `CommentResChan`, but every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, we'll fail and cancel the program due to in that case the final result wouldn't be accurate.
 
       - If the comment has sub-comments it triggers requests (`GetComment`) into channel `ItemReqChan`.
 
       - Increment a counter called `commentsAcc` by 1 (a new comment has been processed). (The final state for the counter will be the **total number of comments**)
      
-      - Update another counter called `pendingCommentsAcc` which keeps the number of comments pending to process. The logic is: for every request (`GetComment`) triggered into channel `ItemReqChan`, we increment this counter by 1 (one comment is pending to process). On the other hand, every time we collect and process a comment the counter decreases by 1. So our aggregation will be done once `pendingCommentsAcc` equals 0. This is the last step before iterating (if so).
+      - Update another counter called `pendingCommentsAcc` which keeps the number of comments pending to get full info and process it. The logic is: for every request (`GetComment`) triggered into channel `ItemReqChan`, we increment this counter by 1 (one comment is pending to process). On the other hand, every time we collect and process a comment the counter decreases by 1. So our aggregation will be done once `pendingCommentsAcc` equals 0. This is the last step before iterating (if so).
 
       - Update a queue called `aggQueue` where the aggregation magic happens. This **Priority Search Queue** is defined by two values: a **key** (commenter name) and a **priority** (commenter's number of comments). Every time a **comment** is processed we update the **priority** for the owner of the comment (**key = name**). The magic of this data structure `Data.PSQueue` is that it keeps the queue ordered on the fly. In other words, at the time of getting the final result of the aggregation, the result will be ready. On the other hand, insertions are really fast as well. Please, check library docs  ( https://hackage.haskell.org/package/PSQueue-1.1.0.1/docs/Data-PSQueue.html ) and you'll see that all operations have **O(log n)** and **O(1)**. That guy deserves the Novel prize! 
 
@@ -89,7 +89,7 @@ Its mission is to collect the top 30 commenter names and count the total comment
 
 <br />
 
-Their goal is to request **HackerNews HTTP API** and provide the results to `CommentAggregator` and `TopStoriesManager`. The logic is simple. Here's where **parallelism** occurs (the program creates a bunch of `HttpWorker`s). 
+Their goal is to request **HackerNews HTTP API** and provide the results to `CommentAggregator` and `TopStoriesManager` through the mentioned channels. The logic is simple. Here's where **parallelism** occurs (the program creates a bunch of `HttpWorker`s). 
 
   - Listen to channel `ItemReqChan` to get command requests `GetStory` and `GetComment`.
   
@@ -107,10 +107,10 @@ Their goal is to request **HackerNews HTTP API** and provide the results to `Com
 
 <br />
 
-Its mission is to print log messages on the terminal. For that:
+This component is in charge of printing log messages on the terminal. For that:
 
   - Listen to a channel called `LoggerChan` which receives all log messages (results included) from all other components.
-  - Print messages and iterates **forever** until `Main` gets the results. At that point, `Main` will **cancel** it. 
+  - Print messages and iterates **forever** until `Main` gets the results. Same as before, `Main` will **cancel** it. 
 
 
 <br />
@@ -119,7 +119,7 @@ Its mission is to print log messages on the terminal. For that:
 
 <br />
 
-Their mission is to facilitates **asynchronous communication** between components. 
+Their responsibility is to facilitates **asynchronous communication** between components. 
 
   - `ItemReqChan` for request: `GetStory` and `GetComment`. 
 
