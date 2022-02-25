@@ -21,6 +21,7 @@ import HackerNews.Types
       Comment(Comment, cDeleted, cCommentIds, cBy, cId),
       Story(Story, sCommentIds, sTotalComments, sBy, sTitle, sId),
       NumberOfComments,
+      NumberOfStories,
       Name,
       Result(AggregatorResult),
       ItemReq(GetComment),
@@ -35,11 +36,11 @@ commentAggregator Env{..} = do
     logInfo loggerChan "commentAggregator - Aggregation done"
     return $ AggregatorResult topNames totalComments
   where
-    processCommentsFromStory :: StoryResChan -> IO NumberOfComments
+    processCommentsFromStory :: StoryResChan -> IO (NumberOfStories, NumberOfComments) 
     processCommentsFromStory storyResChanR = do
         mstory <- atomically $ readTChan storyResChanR
         case mstory of 
-            Nothing             -> return 0 
+            Nothing             -> return (0, 0) 
             Just (_, Story{..}) -> do
                 forM_ sCommentIds $ atomically . writeTChan itemReqChan . GetComment
                 logDebug loggerChan $
@@ -49,7 +50,7 @@ commentAggregator Env{..} = do
                 forM_ sCommentIds $ \cId -> 
                     logDebug loggerChan $ "commentAggregator (from story) - Triggered request GetComment: " <> show cId    
                     
-                return $ length sCommentIds
+                return $ (1, length sCommentIds)
     
     -- Note: This might have been implemented using 'StateT IO a' instead of loopM
     processComments :: StoryResChan -> IO ([(Name, NumberOfComments)], NumberOfComments)
@@ -60,9 +61,9 @@ commentAggregator Env{..} = do
                 [show storiesProcessedAcc, show pendingCommentsAcc, show commentsAcc]
             
             -- Story processing: Get first level comments of top stories and trigger GetComment request to get info about them   
-            (storiesProcessedAcc', commentsInStory) <- if storiesProcessedAcc < numberOfStories 
-                then (succ storiesProcessedAcc,) <$> processCommentsFromStory storyResChanR
-                else return (storiesProcessedAcc, 0)
+            (storyProcessed, commentsInStory) <- if storiesProcessedAcc < numberOfStories 
+                then processCommentsFromStory storyResChanR
+                else return (0, 0)
 
             -- Read a comment. 
             -- Note: There's something wrong on HackerNews API. Sometimes it returns a NULL value as a comment 
@@ -84,9 +85,10 @@ commentAggregator Env{..} = do
                 logDebug loggerChan $ "commentAggregator - Triggered request GetComment: " <> show id_
               
             -- Update state  
-            let commentsAcc'        = succ commentsAcc
-                aggQueue'           = updateAggQueue cBy aggQueue
-                pendingCommentsAcc' = pendingCommentsAcc + length cCommentIds + commentsInStory - 1 
+            let storiesProcessedAcc' = storiesProcessedAcc + storyProcessed
+                commentsAcc'         = succ commentsAcc
+                aggQueue'            = updateAggQueue cBy aggQueue
+                pendingCommentsAcc'  = pendingCommentsAcc + length cCommentIds + commentsInStory - 1 
             
             if pendingCommentsAcc' == 0 
                 then do 
