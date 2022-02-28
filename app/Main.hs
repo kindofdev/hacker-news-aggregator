@@ -61,10 +61,9 @@ main = handleAny (\ex -> putStrLn $ "Oops, an exception ocurred: " <> show ex) $
         withAsync (topStoriesManager env) $ \ storiesManagerA -> do
             withAsync (commentAggregator env) $ \ commentAggA -> do
                 withAsyncMany (replicateM numberOfWorkers httpWorker env) $ \ workersA -> do
-                    logInfo loggerChan "Bonjour CS!"
                     logInfo loggerChan "Running ..."
                     collectResults env [storiesManagerA, commentAggA]
-                    logInfo loggerChan "DONE, looking forward to joining CS crew ;)" 
+                    logInfo loggerChan "DONE" 
                     forM_ workersA cancel
                     cancel loggerA
 

@@ -166,10 +166,6 @@ time cabal run hacker-news-aggregator -- 8 8 30 10 INFO
 ```
 <br />
 
-**É voilà ...** 
-
-<br />
-
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
