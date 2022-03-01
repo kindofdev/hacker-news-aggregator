@@ -31,17 +31,17 @@ The application architecture consists on multiple processes forked using `Contro
 
   - Create communication channels (TChans): `ItemReqChan`, `StoryResChan`, `CommentResChan` and `LoggerChan`.
 
-  - Fork the processes: `TopStoriesManager`, `CommentAggregator`, `HttpWorker`s and `Logger`.
+  - Fork the processes: `TopStoriesCollector`, `CommentAggregator`, `HttpClient`s and `Logger`.
   
-  - Wait for any of the results provided by `TopStoriesManager` (**Top 30 stories title**) or `CommentAggregator` (**Top 10 Commenter** names and **Total number of comments for the top 30 stories**). 
+  - Wait for any of the results provided by `TopStoriesCollector` (**Top 30 stories title**) or `CommentAggregator` (**Top 10 Commenter** names and **Total number of comments for the top 30 stories**). 
   
   - Print each result as it gets computed (don't need to wait to have all the results), and then wait for the second result. 
   
-  - Cancel httpWorkers and logger. (So good Async library!)
+  - Cancel httpCallers and logger. (So good Async library!)
 
 <br />
 
-### 2. TopStoriesManager. 
+### 2. TopStoriesCollector. 
 
 <br />
 
@@ -49,11 +49,11 @@ Its mission is to collect the top 30 story titles.
   
   - Request synchronously the top 30 stories in `/v0/topstories` (note: this service returns 500 stories and jobs, but we are only interested of stories)
 
-  - For the first 30 items (stories or jobs) it triggers 30 requests `GetStory` containing the item ids into channel `ItemReqChan`. (As a spoiler, httpWorkers listen to this channel in order to get the item ids, then process the stories, and finally put the results into `StoryResChan`).
+  - For the first 30 items (stories or jobs) it triggers 30 requests `GetStory` containing the item ids into channel `ItemReqChan`. (As a spoiler, httpCallers listen to this channel in order to get the item ids, then process the stories, and finally put the results into `StoryResChan`).
 
   - Keep a `storyIdsReserve` list with the rest (470). (More in next point) 
 
-  - Listen to channel `StoryResChan` where `HttpWorker`s will publish the stories processed. Here, it iterates until collecting 30 processed stories, and finally returns the titles of the top stories. An interesting thing is that because the items ids previously triggered might be **jobs** we need to check whether the processed story is actually a story (**Maybe Story**). So in case of getting a non-story, we'll trigger a new request `GetStory` through `ItemReqChan` getting the itemId from `storyIdsReserve`. This way, we only request the necessary items, reducing traffic and processing.
+  - Listen to channel `StoryResChan` where `HttpClient`s will publish the stories processed. Here, it iterates until collecting 30 processed stories, and finally returns the titles of the top stories. An interesting thing is that because the items ids previously triggered might be **jobs** we need to check whether the processed story is actually a story (**Maybe Story**). So in case of getting a non-story, we'll trigger a new request `GetStory` through `ItemReqChan` getting the itemId from `storyIdsReserve`. This way, we only request the necessary items, reducing traffic and processing.
 
   - Before returning the result to `Main`, we need to order the stories collected. For this, first thing we do in first step is to zip the itemIds received with indices [1..], and consequently attach the index in the request. 
 
@@ -65,7 +65,7 @@ Its mission is to collect the top 30 story titles.
 
 Its mission is to collect the top 30 commenter names and count the total comments of the top 30 stories. 
 
-  - Listen to `StoryResChan` to get the stories processed by `TopStoriesManager`. For each collected story it gets the commentIds and then triggers multiple requests (`GetComment`) into channel `ItemReqChan` (same place as requests for stories). Also in this case `HttpWorker`s will collect these requests from the channel in order to processed them, and finally put the results in channel `CommentResChan`. Once it gets the top 30 stories, it won't request more work from `HttpWorker`s. Note that this collection happens sequentially with collection of comments (next step). 
+  - Listen to `StoryResChan` to get the stories processed by `TopStoriesCollector`. For each collected story it gets the commentIds and then triggers multiple requests (`GetComment`) into channel `ItemReqChan` (same place as requests for stories). Also in this case `HttpClient`s will collect these requests from the channel in order to processed them, and finally put the results in channel `CommentResChan`. Once it gets the top 30 stories, it won't request more work from `HttpClient`s. Note that this collection happens sequentially with collection of comments (next step). 
 
   - `CommentAggregator` also listens to `CommentResChan` to get processed comments and aggregate the results (**top 10 commenter names**). Here the logic is as follows. 
 
@@ -85,11 +85,11 @@ Its mission is to collect the top 30 commenter names and count the total comment
 
 <br />
 
-### 4. HttpWorkers. 
+### 4. HttpClients. 
 
 <br />
 
-Their goal is to request **HackerNews HTTP API** and provide the results to `CommentAggregator` and `TopStoriesManager` through the mentioned channels. The logic is simple. Here's where **parallelism** occurs (the program creates a bunch of `HttpWorker`s). 
+Their goal is to request **HackerNews HTTP API** and provide the results to `CommentAggregator` and `TopStoriesCollector` through the mentioned channels. The logic is simple. Here's where **parallelism** occurs (the program creates a bunch of `HttpClient`s). 
 
   - Listen to channel `ItemReqChan` to get command requests `GetStory` and `GetComment`.
   
@@ -99,7 +99,7 @@ Their goal is to request **HackerNews HTTP API** and provide the results to `Com
   
   - Depending if the item is a **comment** or a **story**, we will put the result in `CommentResChan` or `StoryResChan`. 
   
-  - Runs **forever** until `Main` gets the results. At that point, `Main` will **cancel** the workers. 
+  - Runs **forever** until `Main` gets the results. At that point, `Main` will **cancel** httpClients. 
 
 <br />
 
@@ -123,17 +123,17 @@ Their responsibility is to facilitates **asynchronous communication** between co
 
   - `ItemReqChan` for request: `GetStory` and `GetComment`. 
 
-      - Writers: `TopStoriesManager` <> `CommentAggregator`
-      - Readers: `HttpWorker`s 
+      - Writers: `TopStoriesCollector` <> `CommentAggregator`
+      - Readers: `HttpClient`s 
     
   - `StoryResChan` for story results.
      
-      - Writers: `HttpWorkers`
-      - Readers: `TopStoriesManager` <> `CommentAggregator`
+      - Writers: `HttpClient`s
+      - Readers: `TopStoriesCollector` <> `CommentAggregator`
 
   - `CommentResChan` for comment results.
   
-      - Writers: `HttpWorker`s
+      - Writers: `HttpClient`s
       - Reader: `CommentAggregator` 
 
   - `LoggerChan` for logging and **final results** messages. (Check `LogLevel`)
@@ -148,7 +148,7 @@ Their responsibility is to facilitates **asynchronous communication** between co
 
 <br />
 
-![](images/HackerNews.jpg)
+![](images/HackerNews_v2.jpg)
 
 <br />
 

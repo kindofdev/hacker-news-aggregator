@@ -34,7 +34,6 @@ import Data.Aeson
 data Error = JsonParsingError   
            | NotFoundStories 
            | ShouldNeverHappen Text
-          --  | HackerNewsReturnNullComment 
            deriving (Eq, Show)
 
 newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env (ExceptT Error IO) a }
@@ -120,11 +119,11 @@ instance FromJSON Comment where
 
 -- env --
 
-type NumberOfStories   = Int
-type NumberOfTopNames  = Int
-type NumberOfWorkers   = Int
-type ParallelismFactor = Int
-type NumberOfCores     = Int
+type NumberOfStories     = Int
+type NumberOfTopNames    = Int
+type NumberOfHttpClients = Int
+type ParallelismFactor   = Int
+type NumberOfCores       = Int
 
 data LogLevel = DEBUG
               | INFO
@@ -134,13 +133,13 @@ data LogLevel = DEBUG
               deriving (Eq, Show, Ord, Read)
 
 data Env = Env
-    { numberOfWorkers  :: NumberOfWorkers
-    , numberOfStories  :: NumberOfStories
-    , numberOfTopNames :: NumberOfTopNames
-    , itemReqChan      :: ItemReqChan
-    , storyResChan     :: StoryResChan
-    , commentResChan   :: CommentResChan
-    , loggerChan       :: LoggerChan
-    , logLevel         :: LogLevel
-    , httpConfig       :: HttpConfig
+    { numberOfHttpClients :: NumberOfHttpClients
+    , numberOfStories     :: NumberOfStories
+    , numberOfTopNames    :: NumberOfTopNames
+    , itemReqChan         :: ItemReqChan
+    , storyResChan        :: StoryResChan
+    , commentResChan      :: CommentResChan
+    , loggerChan          :: LoggerChan
+    , logLevel            :: LogLevel
+    , httpConfig          :: HttpConfig
     }

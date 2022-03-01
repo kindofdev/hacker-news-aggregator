@@ -3,9 +3,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 
-module HackerNews.HttpWorker 
+module HackerNews.HttpClient
     ( topStories 
-    , httpWorker
+    , httpClient
     ) where
 
 import Control.Concurrent.STM.TChan ( readTChan, writeTChan )    
@@ -31,7 +31,7 @@ import HackerNews.Logger ( logDebug, logWarn )
 import HackerNews.Types
     ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
           storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
-          numberOfWorkers),
+          numberOfHttpClients),
       Comment,
       Story,
       CommentId,
@@ -40,9 +40,10 @@ import HackerNews.Types
       StoryIndex(..),
       HackerNewsM,
       Error(NotFoundStories) )
-   
-httpWorker :: HackerNewsM ()
-httpWorker = forever $ do
+
+
+httpClient :: HackerNewsM ()
+httpClient = forever $ do
     Env{..}  <- ask
     itemReq <- liftIO $ atomically $ readTChan itemReqChan
     case itemReq of
@@ -50,18 +51,18 @@ httpWorker = forever $ do
         -- storyIds collected from service /v0/topstories.json which return stories and jobs. 
         -- See docs: "Up to 500 top and new stories are at /v0/topstories (also contains jobs)"
         GetStory storyIndex storyId -> do  
-            logDebug $ "httpWorker - Processing GetStory req for storyId: " <> show storyId
+            logDebug $ "httpClient - Processing GetStory req for storyId: " <> show storyId
             mstory <- readStory storyId
             liftIO $ atomically $ writeTChan storyResChan $ (storyIndex, ) <$> mstory
-            logDebug $ "httpWorker - Processed GetStory req for storyId: " <> show storyId
+            logDebug $ "httpClient - Processed GetStory req for storyId: " <> show storyId
         GetComment commentId        -> do  
-            logDebug $ "httpWorker - Processing GetComment req for commentId: " <> show commentId
+            logDebug $ "httpClient - Processing GetComment req for commentId: " <> show commentId
             mcomment <- readComment commentId
             when (isNothing mcomment) $ do
-                logWarn $ "httpWorker - Comment null with commentId: " <> show commentId 
+                logWarn $ "httpClient - Comment null with commentId: " <> show commentId 
 
             liftIO $ atomically $ writeTChan commentResChan mcomment
-            logDebug $ "httpWorker - Processed GetComment req for commentId: " <> show commentId
+            logDebug $ "httpClient - Processed GetComment req for commentId: " <> show commentId
 
 topStories :: HackerNewsM [(StoryIndex, StoryId)]
 topStories = flip catchError (\_ -> throwError NotFoundStories) $ zip [StoryIndex 1 ..] <$> do 

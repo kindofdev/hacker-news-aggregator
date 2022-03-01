@@ -20,21 +20,32 @@ import Text.Format                  ( format )
 
 import HackerNews.Logger            ( logDebug, logInfo, logError )
 import HackerNews.Types
-
-
+    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
+          storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
+          numberOfHttpClients),
+      NumberOfStories,
+      Comment(Comment, cCommentIds, cBy),
+      Story(Story, sCommentIds, sTotalComments, sBy, sTitle, sId),
+      NumberOfComments,
+      Name,
+      Result(AggregatorResult),
+      ItemReq(GetComment),
+      StoryResChan,
+      HackerNewsM,
+      Error(ShouldNeverHappen) )
 
 commentAggregator :: HackerNewsM Result
 commentAggregator = do 
     logInfo "commentAggregator - Starting ..."
     Env{..}                   <- ask
     storyResChanR             <- liftIO $ atomically $ dupTChan storyResChan
-    (topNames, totalComments) <- processComments storyResChanR
+    (topNames, totalComments) <- getTopNamesAndTotalComments storyResChanR
     
     logInfo "commentAggregator - Aggregation done"
     return $ AggregatorResult topNames totalComments
   where
-    processCommentsFromStory :: StoryResChan -> HackerNewsM (NumberOfStories, NumberOfComments) 
-    processCommentsFromStory storyResChanR = do
+    collectCommentsFromStory :: StoryResChan -> HackerNewsM (NumberOfStories, NumberOfComments) 
+    collectCommentsFromStory storyResChanR = do
         Env{..} <- ask
         mstory  <- liftIO $ atomically $ readTChan storyResChanR
         case mstory of 
@@ -50,8 +61,8 @@ commentAggregator = do
                 return (1, length sCommentIds)
     
     -- Note: This might have been implemented using 'StateT IO a' instead of loopM
-    processComments :: StoryResChan -> HackerNewsM ([(Name, NumberOfComments)], NumberOfComments)  -- TODO change name 
-    processComments storyResChanR  = do
+    getTopNamesAndTotalComments :: StoryResChan -> HackerNewsM ([(Name, NumberOfComments)], NumberOfComments) 
+    getTopNamesAndTotalComments storyResChanR  = do
         Env{..} <- ask
         flip loopM (initialAggQueue, 0, 0, 0) $ \(aggQueue, storiesProcessedAcc, pendingCommentsAcc, commentsAcc) -> do
             logDebug $ 
@@ -60,7 +71,7 @@ commentAggregator = do
             
             -- Story processing: Get first level comments of top stories and trigger GetComment request to get info about them   
             (storyProcessed, commentsInStory) <- if storiesProcessedAcc < numberOfStories 
-                then processCommentsFromStory storyResChanR
+                then collectCommentsFromStory storyResChanR
                 else return (0, 0)
 
             -- Read a comment. 
@@ -94,7 +105,7 @@ commentAggregator = do
                     logInfo $ "Number of stories processed: " <> show storiesProcessedAcc'
                     logInfo $ "Number of comments processed: " <> show commentsAcc'
                     logInfo $ "Number of unique users in comments: " <> show (PSQ.size aggQueue)
-                    logInfo "processComments - Aggregation done :)"
+                    logInfo "getTopNamesAndTotalComments - Aggregation done :)"
                     return $ Right (takeTopNames numberOfTopNames aggQueue, commentsAcc')
                 else do
                     logDebug $ 

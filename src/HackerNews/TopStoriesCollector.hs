@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
-module HackerNews.TopStoriesManager 
-    ( topStoriesManager
+module HackerNews.TopStoriesCollector 
+    ( topStoriesCollector
     ) where
 
 import Control.Concurrent.STM.TChan ( dupTChan, readTChan, writeTChan )
@@ -15,7 +15,7 @@ import HackerNews.Logger ( logDebug, logInfo, logWarn )
 import HackerNews.Types
     ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
           storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
-          numberOfWorkers),
+          numberOfHttpClients),
       Story(sTitle),
       StoryId,
       Result(TopStoriesResult),
@@ -24,13 +24,14 @@ import HackerNews.Types
       IndexedStory,
       StoryResChan,
       HackerNewsM )
-import HackerNews.HttpWorker        ( topStories )
+
+import HackerNews.HttpClient        ( topStories )
 
 type StoryIdsReserve = [(StoryIndex, StoryId)]
 
-topStoriesManager :: HackerNewsM Result
-topStoriesManager = do
-    logInfo "topStoriesManager - Starting ..."
+topStoriesCollector :: HackerNewsM Result
+topStoriesCollector = do
+    logInfo "topStoriesCollector - Starting ..."
     Env{..}       <- ask
 
     storyResChanR <- liftIO $ atomically $ dupTChan storyResChan
@@ -39,14 +40,14 @@ topStoriesManager = do
     let (storyIdsToCheck, storyIdsReserve) = splitAt numberOfStories storyIds
 
     forM_ storyIdsToCheck $ \(index, itemId) -> liftIO $ atomically $ writeTChan itemReqChan $ GetStory index itemId 
-    logDebug $ "topStoriesManager - Triggered initial requests GetStory: " <> show storyIdsToCheck
-    logDebug $ "topStoriesManager - Keep a reserve of storyIds for the case when any of the storyIdsToCheck is not a story: " 
+    logDebug $ "topStoriesCollector - Triggered initial requests GetStory: " <> show storyIdsToCheck
+    logDebug $ "topStoriesCollector - Keep a reserve of storyIds for the case when any of the storyIdsToCheck is not a story: " 
              <> show (take 30 storyIdsReserve)
 
     stories <- fmap snd . sort <$> collectStoryItems storyIdsReserve storyResChanR
-    logDebug $ "topStoriesManager - Stories collected " <> show (length stories)
+    logDebug $ "topStoriesCollector - Stories collected " <> show (length stories)
 
-    logInfo "topStoriesManager - Done, returning results"
+    logInfo "topStoriesCollector - Done, returning results"
     return $ TopStoriesResult $ sTitle <$> stories
 
   where
@@ -54,10 +55,10 @@ topStoriesManager = do
     collectStoryItems :: StoryIdsReserve -> StoryResChan -> HackerNewsM [IndexedStory]
     collectStoryItems initialStoryIdsReserve storyResChanR = do 
         Env{..}       <- ask
-        logDebug $ "storyIdsReserve init contains: " <> show initialStoryIdsReserve
+        logDebug $ "topStoriesCollector - storyIdsReserve init contains: " <> show initialStoryIdsReserve
         flip loopM (0, [], initialStoryIdsReserve) $ \(n, stories, storyIdsReserve) -> do
             mindexStory <- liftIO $ atomically $ readTChan storyResChanR
-            logDebug $ "collectStoryItems - Checking item " <> show mindexStory
+            logDebug $ "topStoriesCollector - Checking item " <> show mindexStory
 
             let isStory           = isJust mindexStory
                 idsQueueExhausted = null storyIdsReserve
@@ -68,10 +69,10 @@ topStoriesManager = do
                     when idsQueueExhausted $ logWarn "collectStoryItems - storyIdsReserve exhausted"
                     return storyIdsReserve
                 else do
-                    logDebug $ "storyIdsReserve contains: " <> show storyIdsReserve
+                    logDebug $ "topStoriesCollector - storyIdsReserve contains: " <> show storyIdsReserve
                     let (storyIndex_, storyId_) = head storyIdsReserve
                     liftIO $ atomically $ writeTChan itemReqChan $ GetStory storyIndex_ storyId_ 
-                    logDebug $ "collectStoryItems - Extracted story from storyIdsReserve and triggered request GetStory: " 
+                    logDebug $ "topStoriesCollector - Extracted story from storyIdsReserve and triggered request GetStory: " 
                              <> show (storyId_, storyIndex_)
 
                     return $ tail storyIdsReserve

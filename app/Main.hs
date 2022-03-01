@@ -1,33 +1,23 @@
 {-# LANGUAGE RecordWildCards #-}
 module Main where
 
-import Control.Concurrent.Async     ( cancel, waitAny, withAsync, Async )     
-import Control.Concurrent.STM.TChan ( newBroadcastTChanIO, newTChanIO )
-import Control.Exception.Safe       ( handleAny )
-import Control.Monad                ( forM_ , void)                             
-import Control.Monad.Reader         ( MonadIO(liftIO), MonadReader(ask) )
-import GHC.IO.Encoding              ( setLocaleEncoding, utf8 )
-import Network.HTTP.Req             ( defaultHttpConfig )
-import Text.Format                  ( format )
-
-import HackerNews.Cli               ( InputParams (..), parseArgsIO )
-import HackerNews.CommentAggregator ( commentAggregator )
-import HackerNews.HttpWorker        ( httpWorker )
-import HackerNews.Logger            ( logger, logError, logResult )            
-import HackerNews.TopStoriesManager ( topStoriesManager )
+import Control.Concurrent.Async       ( cancel, waitAny, withAsync, Async )     
+import Control.Concurrent.STM.TChan   ( newBroadcastTChanIO, newTChanIO )
+import Control.Exception.Safe         ( handleAny )
+import Control.Monad                  ( forM_ , void)                             
+import Control.Monad.Reader           ( MonadIO(liftIO), MonadReader(ask) )
+import GHC.IO.Encoding                ( setLocaleEncoding, utf8 )
+import Network.HTTP.Req               ( defaultHttpConfig )
+import Text.Format                    ( format )
+  
+import HackerNews.Cli                 ( InputParams (..), parseArgsIO )
+import HackerNews.CommentAggregator   ( commentAggregator )
+import HackerNews.HttpClient          ( httpClient )
+import HackerNews.Logger              ( logger, logError, logResult )            
+import HackerNews.TopStoriesCollector ( topStoriesCollector ) 
 import HackerNews.Types
-    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
-          storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
-          numberOfWorkers),
-      Result(..),
-      LoggerChan,
-      CommentResChan,
-      StoryResChan,
-      ItemReqChan,
-      HackerNewsM,
-      runHackerNewsM,
-      Error )
-import HackerNews.Utils ( withAsyncMany )
+
+import HackerNews.Utils                ( withAsyncMany )
 
 main :: IO ()   
 main = handleAny (\ex -> putStrLn $ "Oops, an exception ocurred: " <> show ex) $ do 
@@ -51,9 +41,9 @@ main = handleAny (\ex -> putStrLn $ "Oops, an exception ocurred: " <> show ex) $
     -- Reader: logger 
     loggerChan     <- newTChanIO          :: IO LoggerChan
 
-    let numberOfWorkers = ipNumberOfCores * ipParallelismFactor :: Int
+    let numberOfHttpClients = ipNumberOfCores * ipParallelismFactor :: Int
         env = Env 
-            { numberOfWorkers     = numberOfWorkers
+            { numberOfHttpClients = numberOfHttpClients
             , numberOfStories     = ipNumberOfStories
             , numberOfTopNames    = ipNumberOfTopNames
             , itemReqChan         = itemReqChan
@@ -65,11 +55,11 @@ main = handleAny (\ex -> putStrLn $ "Oops, an exception ocurred: " <> show ex) $
             }  
 
     withAsync (runHackerNewsM env logger) $ \ loggerA -> do 
-        withAsync (runHackerNewsM env topStoriesManager) $ \ storiesManagerA -> do
+        withAsync (runHackerNewsM env topStoriesCollector) $ \ storiesManagerA -> do
             withAsync (runHackerNewsM env commentAggregator) $ \ commentAggA -> do
-                withAsyncMany (replicate numberOfWorkers (runHackerNewsM env httpWorker)) $ \ workersA -> do
+                withAsyncMany (replicate numberOfHttpClients (runHackerNewsM env httpClient)) $ \ httpClientsA -> do
                     void $ runHackerNewsM env $ collectResults [storiesManagerA, commentAggA]
-                    forM_ workersA cancel
+                    forM_ httpClientsA cancel
                     cancel loggerA
 
 collectResults :: [Async (Either Error Result)] -> HackerNewsM ()
