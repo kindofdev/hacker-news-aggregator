@@ -10,11 +10,10 @@ Using the Hacker News API Documentation (https://github.com/HackerNews/API) writ
 ## Disclaimer 
 <br />
 This project is not a production-ready one, just an exercise trying to achieve the requirements above, efficiency, performance and readability. In a production context, most probably, I would have made other decisions like using libraries/frameworks. Say a logger library. Also I would have used a streaming library/framework for instance **Conduit**, **Kafka**, **Flink** or **Streamly** for example. 
+
 My intention with current design has been to play with Haskell concurrency primitives and have fun. 
 
-**Hacker News Bug** :  There's an issue with the API (see below for details). In these cases the program terminates with a managed error: 
-
-> "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request" 
+**Hacker News Bug** :  There's an issue with the API (see below for details). In these cases the program ignores the empty comment and continues. 
 
 <br />
 
@@ -69,9 +68,10 @@ Its mission is to collect the top 30 commenter names and count the total comment
   - Listen to `StoryResChan` to get the stories processed by `TopStoriesManager`. For each collected story it gets the commentIds and then triggers multiple requests (`GetComment`) into channel `ItemReqChan` (same place as requests for stories). Also in this case `HttpWorker`s will collect these requests from the channel in order to processed them, and finally put the results in channel `CommentResChan`. Once it gets the top 30 stories, it won't request more work from `HttpWorker`s. Note that this collection happens sequentially with collection of comments (next step). 
 
   - `CommentAggregator` also listens to `CommentResChan` to get processed comments and aggregate the results (**top 10 commenter names**). Here the logic is as follows. 
+
      For each comment: 
 
-      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments from channel `CommentResChan`, but every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, we'll fail and cancel the program due to in that case the final result wouldn't be accurate.
+      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments from channel `CommentResChan`, but every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, the program ignores the empty comment and continues. 
 
       - If the comment has sub-comments it triggers requests (`GetComment`) into channel `ItemReqChan`.
 

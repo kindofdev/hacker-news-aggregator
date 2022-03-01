@@ -34,7 +34,7 @@ import Data.Aeson
 data Error = JsonParsingError   
            | NotFoundStories 
            | ShouldNeverHappen Text
-           | HackerNewsReturnNullComment 
+          --  | HackerNewsReturnNullComment 
            deriving (Eq, Show)
 
 newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env (ExceptT Error IO) a }

@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -11,7 +12,7 @@ import Control.Monad.Reader         ( MonadReader(ask) )
 import Control.Monad.STM            ( atomically )                        
 import qualified Data.Bifunctor     as Bi
 import Data.List                    ( unfoldr )     
-import Data.Maybe                   ( fromJust, isNothing )                  
+import Data.Maybe                                  
 import Data.Ord                     ( Down(..) )                       
 import Data.PSQueue                 ( PSQ )                   
 import qualified Data.PSQueue       as PSQ
@@ -19,19 +20,7 @@ import Text.Format                  ( format )
 
 import HackerNews.Logger            ( logDebug, logInfo, logError )
 import HackerNews.Types
-    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
-          storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
-          numberOfWorkers),
-      NumberOfStories,
-      Comment(Comment, cDeleted, cCommentIds, cBy, cId),
-      Story(Story, sCommentIds, sTotalComments, sBy, sTitle, sId),
-      NumberOfComments,
-      Name,
-      Result(AggregatorResult),
-      ItemReq(GetComment),
-      StoryResChan,
-      HackerNewsM,
-      Error(ShouldNeverHappen, HackerNewsReturnNullComment) )
+
 
 
 commentAggregator :: HackerNewsM Result
@@ -78,27 +67,20 @@ commentAggregator = do
             -- Note: There's something wrong on HackerNews API. Sometimes it returns a NULL value as a comment 
             -- for a valid comment. See a detail explanation in HackerNews.HttpWorker.readComment  
             mcomment <- liftIO $ atomically $ readTChan commentResChan
+            logDebug $ "commentAggregator - Processing comment: " <> show mcomment 
 
-            when (isNothing mcomment) $ do 
-                -- let errorMsg = "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request"
-                logError "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request"
-                -- logError "commentAggregator - Canceling execution"
-                throwError HackerNewsReturnNullComment
-            
-            let Comment{..} = fromJust mcomment -- safe
-            logDebug $ "commentAggregator - Processing comment: " <> show cId 
-            
+            -- Update state  
+            let commentsAcc'         = if isJust mcomment then succ commentsAcc else commentsAcc
+                subCommentIds        = maybe [] cCommentIds mcomment
+                aggQueue'            = maybe aggQueue (\Comment{cBy} -> updateAggQueue cBy aggQueue) mcomment
+                pendingCommentsAcc'  = pendingCommentsAcc + length subCommentIds + commentsInStory - 1 
+                storiesProcessedAcc' = storiesProcessedAcc + storyProcessed 
+
             -- Trigger request GetComment to get the info about comments kids
-            forM_ cCommentIds $ \id_ -> do 
+            forM_ subCommentIds $ \id_ -> do 
                 liftIO $ atomically $ writeTChan itemReqChan $ GetComment id_ 
                 logDebug $ "commentAggregator - Triggered request GetComment: " <> show id_
-              
-            -- Update state  
-            let storiesProcessedAcc' = storiesProcessedAcc + storyProcessed
-                commentsAcc'         = succ commentsAcc
-                aggQueue'            = updateAggQueue cBy aggQueue
-                pendingCommentsAcc'  = pendingCommentsAcc + length cCommentIds + commentsInStory - 1 
-            
+
             if pendingCommentsAcc' == 0 
                 then do 
                     when (storiesProcessedAcc' /= numberOfStories) $ do
