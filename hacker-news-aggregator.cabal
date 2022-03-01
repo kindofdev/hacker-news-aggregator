@@ -44,6 +44,7 @@ library
                     , PSQueue
                     , async
                     , safe-exceptions
+                    , mtl
     hs-source-dirs:   src
     default-language: Haskell2010
     ghc-options:      -Wall
@@ -64,6 +65,7 @@ executable cardashift-challenge
         , stm
         , async
         , safe-exceptions
+        , mtl
 
     hs-source-dirs:   app
     default-language: Haskell2010

@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings           #-}
 module HackerNews.Types where
 
-import Control.Monad                ( unless )
+import Control.Monad.Reader         ( MonadIO, unless, ReaderT(..), MonadReader )
 import Control.Concurrent           ( MVar )
 import Control.Concurrent.STM.TChan ( TChan )
 
@@ -14,9 +14,19 @@ import Data.Aeson
       withObject,
       Value(String) )
 
+
+-- the monad --
+
+newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env IO a }
+                      deriving (Functor, Applicative, Monad, MonadIO, MonadReader Env)
+
+runHackerNewsM :: Env -> HackerNewsM a -> IO a
+runHackerNewsM env m = runReaderT (run m) env
+
+
 -- channels --
 
-type ItemReqChan        = TChan ItemReq  
+type ItemReqChan        = TChan ItemReq
 type StoryResChan       = TChan (Maybe IndexedStory)
 type CommentResChan     = TChan (Maybe Comment)
 type ResultChan         = MVar Result
@@ -32,9 +42,9 @@ data ItemReq = GetStory StoryIndex StoryId
 
 -- results --
 
-type TopNames = [(Name, NumberOfComments)] 
+type TopNames = [(Name, NumberOfComments)]
 
-data Result = TopStoriesResult [Title] 
+data Result = TopStoriesResult [Title]
             | AggregatorResult TopNames NumberOfComments
             deriving (Eq, Show)
 
@@ -46,7 +56,7 @@ type Title            = String
 type Name             = String
 type NumberOfComments = Int
 
-data Story = Story 
+data Story = Story
     { sId            :: StoryId            -- id
     , sTitle         :: Title              -- title
     , sBy            :: Name               -- by
@@ -57,15 +67,15 @@ data Story = Story
 instance FromJSON Story where
   parseJSON = withObject "item" $ \o -> do
     (String type') <- o .: "type"
-    unless (type' == "story") $ fail "Story expected" 
+    unless (type' == "story") $ fail "Story expected"
     id_            <- o .:  "id"
     title          <- o .:  "title"
     by             <- o .:  "by"
     descendants    <- o .:  "descendants"
     kids           <- o .:? "kids" .!= []
-    return $ Story id_ title by descendants kids   
+    return $ Story id_ title by descendants kids
 
-data Comment = Comment 
+data Comment = Comment
     { cId         :: CommentId    -- id
     , cBy         :: Name         -- by, when comment has been deleted "by" doesn't exist
     , cCommentIds :: [CommentId]  -- kids, when the comment doesn't have sub-comments "kids" doesn't exist
@@ -75,7 +85,7 @@ data Comment = Comment
 instance FromJSON Comment where
   parseJSON = withObject "item" $ \o -> do
     (String type') <- o .: "type"
-    unless (type' == "comment") $ fail "Comment expected" 
+    unless (type' == "comment") $ fail "Comment expected"
     id_         <- o .:  "id"
     by          <- o .:? "by" .!= ""
     kids        <- o .:? "kids" .!= []
@@ -87,23 +97,23 @@ instance FromJSON Comment where
 type NumberOfStories   = Int
 type NumberOfTopNames  = Int
 type NumberOfWorkers   = Int
-type ParallelismFactor = Int 
+type ParallelismFactor = Int
 type NumberOfCores     = Int
 
-data LogLevel = DEBUG 
+data LogLevel = DEBUG
               | INFO
               | WARN
-              | ERROR 
+              | ERROR
               | RESULT
-              deriving (Eq, Show, Ord, Read) 
+              deriving (Eq, Show, Ord, Read)
 
-data Env = Env 
+data Env = Env
     { numberOfWorkers  :: NumberOfWorkers
     , numberOfStories  :: NumberOfStories
     , numberOfTopNames :: NumberOfTopNames
     , itemReqChan      :: ItemReqChan
-    , storyResChan     :: StoryResChan   
+    , storyResChan     :: StoryResChan
     , commentResChan   :: CommentResChan
     , loggerChan       :: LoggerChan
     , logLevel         :: LogLevel
-    }  
+    }

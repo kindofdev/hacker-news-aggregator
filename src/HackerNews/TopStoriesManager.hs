@@ -4,59 +4,63 @@ module HackerNews.TopStoriesManager
     ) where
 
 import Control.Concurrent.STM.TChan ( dupTChan, readTChan, writeTChan )
-import Control.Monad.Extra          ( forM_, when, loopM )            
+import Control.Monad.Extra          ( forM_, when, loopM )               
+import Control.Monad.Reader         ( MonadIO(liftIO), MonadReader(ask) )
 import Control.Monad.STM            ( atomically )
 import Data.Maybe                   ( isJust, isNothing, fromJust)
 import Data.List                    ( sort )
 
 import HackerNews.Logger            ( logDebug, logInfo, logWarn, logError )
 import HackerNews.Types
-    ( Env(..),
+    ( Env(Env, logLevel, loggerChan, commentResChan, storyResChan,
+          itemReqChan, numberOfTopNames, numberOfStories, numberOfWorkers),
+      HackerNewsM,
+      IndexedStory,
+      ItemReq(GetStory),
+      Result(TopStoriesResult),
       Story(sTitle),
       StoryId,
-      Result(TopStoriesResult),
-      ItemReq(GetStory),
       StoryIndex,
-      IndexedStory,
       StoryResChan )
+
 import HackerNews.HttpWorker        ( topStories )
 
 type StoryIdsReserve = [(StoryIndex, StoryId)]
 
-topStoriesManager :: Env -> IO Result
-topStoriesManager Env{..} = do
-    storyResChanR <- atomically $ dupTChan storyResChan
+topStoriesManager :: HackerNewsM Result
+topStoriesManager = do
+    Env{..}       <- ask
+    storyResChanR <- liftIO $ atomically $ dupTChan storyResChan
 
-    mstoryIds     <- topStories
+    mstoryIds     <- liftIO topStories
     when (isNothing mstoryIds) $ do
         let errorMsg = "topStoriesManager - No stories obtained: Canceling execution"
-        logError loggerChan errorMsg
-        fail errorMsg
+        logError errorMsg
+        liftIO $ fail errorMsg
 
     let storyIds = fromJust mstoryIds -- safe
         (storyIdsToCheck, storyIdsReserve) = splitAt numberOfStories storyIds
 
-    forM_ storyIdsToCheck $ \(index, itemId) -> atomically $ writeTChan itemReqChan $ GetStory index itemId 
-    logDebug loggerChan $ 
-        "topStoriesManager - Triggered initial requests GetStory: " <> show storyIdsToCheck
-    logDebug loggerChan $ 
-        "topStoriesManager - Keep a reserve of storyIds for the case when any of the storyIdsToCheck is not a story: " 
-        <> show (take 30 storyIdsReserve)
+    forM_ storyIdsToCheck $ \(index, itemId) -> liftIO $ atomically $ writeTChan itemReqChan $ GetStory index itemId 
+    logDebug $ "topStoriesManager - Triggered initial requests GetStory: " <> show storyIdsToCheck
+    logDebug $ "topStoriesManager - Keep a reserve of storyIds for the case when any of the storyIdsToCheck is not a story: " 
+             <> show (take 30 storyIdsReserve)
 
     stories <- fmap snd . sort <$> collectStoryItems storyIdsReserve storyResChanR
-    logDebug loggerChan $ "topStoriesManager - Stories collected " <> show (length stories)
+    logDebug $ "topStoriesManager - Stories collected " <> show (length stories)
 
-    logInfo loggerChan "topStoriesManager - Done, returning results"
+    logInfo "topStoriesManager - Done, returning results"
     return $ TopStoriesResult $ sTitle <$> stories
 
   where
     -- Note: This might have been implemented using 'StateT IO a' instead of loopM
-    collectStoryItems :: StoryIdsReserve -> StoryResChan -> IO [IndexedStory]
+    collectStoryItems :: StoryIdsReserve -> StoryResChan -> HackerNewsM [IndexedStory]
     collectStoryItems initialStoryIdsReserve storyResChanR = do 
-        logDebug loggerChan $ "storyIdsReserve init contains: " <> show initialStoryIdsReserve
+        Env{..}       <- ask
+        logDebug $ "storyIdsReserve init contains: " <> show initialStoryIdsReserve
         flip loopM (0, [], initialStoryIdsReserve) $ \(n, stories, storyIdsReserve) -> do
-            mindexStory <- atomically $ readTChan storyResChanR
-            logDebug loggerChan $ "collectStoryItems - Checking item " <> show mindexStory
+            mindexStory <- liftIO $ atomically $ readTChan storyResChanR
+            logDebug $ "collectStoryItems - Checking item " <> show mindexStory
 
             let isStory           = isJust mindexStory
                 idsQueueExhausted = null storyIdsReserve
@@ -64,15 +68,14 @@ topStoriesManager Env{..} = do
             
             storyIdsReserve' <- if isStory || idsQueueExhausted
                 then do 
-                    when idsQueueExhausted $ logWarn loggerChan "collectStoryItems - storyIdsReserve exhausted"
+                    when idsQueueExhausted $ logWarn "collectStoryItems - storyIdsReserve exhausted"
                     return storyIdsReserve
                 else do
-                    logDebug loggerChan $ "storyIdsReserve contains: " <> show storyIdsReserve
+                    logDebug $ "storyIdsReserve contains: " <> show storyIdsReserve
                     let (storyIndex_, storyId_) = head storyIdsReserve
-                    atomically $ writeTChan itemReqChan $ GetStory storyIndex_ storyId_ 
-                    logDebug loggerChan $ 
-                        "collectStoryItems - Extracted story from storyIdsReserve and triggered request GetStory: " 
-                        <> show (storyId_, storyIndex_)
+                    liftIO $ atomically $ writeTChan itemReqChan $ GetStory storyIndex_ storyId_ 
+                    logDebug $ "collectStoryItems - Extracted story from storyIdsReserve and triggered request GetStory: " 
+                             <> show (storyId_, storyIndex_)
 
                     return $ tail storyIdsReserve
 

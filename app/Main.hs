@@ -4,7 +4,8 @@ module Main where
 import Control.Concurrent.Async     ( cancel, waitAny, withAsync, Async )     
 import Control.Concurrent.STM.TChan ( newBroadcastTChanIO, newTChanIO )
 import Control.Exception.Safe       ( handleAny )
-import Control.Monad                ( replicateM, forM_ )                
+import Control.Monad ( forM_ )                             
+import Control.Monad.Reader ( MonadIO(liftIO), MonadReader(ask) )
 import GHC.IO.Encoding              ( setLocaleEncoding, utf8 )
 import Text.Format                  ( format )
 
@@ -14,12 +15,15 @@ import HackerNews.HttpWorker        ( httpWorker )
 import HackerNews.Logger            ( logger, logInfo, logResult )
 import HackerNews.TopStoriesManager ( topStoriesManager )
 import HackerNews.Types
-    ( Env(..),
-      Result(..),
+    ( CommentResChan,
+      Env(Env, logLevel, loggerChan, commentResChan, storyResChan,
+          itemReqChan, numberOfTopNames, numberOfStories, numberOfWorkers),
+      HackerNewsM,
+      ItemReqChan,
       LoggerChan,
-      CommentResChan,
+      Result(..),
       StoryResChan,
-      ItemReqChan )
+      runHackerNewsM )
 
 import HackerNews.Utils ( withAsyncMany )
 
@@ -57,43 +61,45 @@ main = handleAny (\ex -> putStrLn $ "Oops, an exception ocurred: " <> show ex) $
             , logLevel            = ipLogLevel
             }  
 
-    withAsync (logger env) $ \ loggerA -> do 
-        withAsync (topStoriesManager env) $ \ storiesManagerA -> do
-            withAsync (commentAggregator env) $ \ commentAggA -> do
-                withAsyncMany (replicateM numberOfWorkers httpWorker env) $ \ workersA -> do
-                    logInfo loggerChan "Running ..."
-                    collectResults env [storiesManagerA, commentAggA]
-                    logInfo loggerChan "DONE" 
+    withAsync (runHackerNewsM env logger) $ \ loggerA -> do 
+        withAsync (runHackerNewsM env topStoriesManager) $ \ storiesManagerA -> do
+            withAsync (runHackerNewsM env commentAggregator) $ \ commentAggA -> do
+                withAsyncMany (replicate numberOfWorkers (runHackerNewsM env httpWorker)) $ \ workersA -> do
+                    runHackerNewsM env $ logInfo "Running ..."
+                    runHackerNewsM env $ collectResults [storiesManagerA, commentAggA]
+                    runHackerNewsM env $ logInfo "DONE" 
                     forM_ workersA cancel
                     cancel loggerA
 
-collectResults :: Env -> [Async Result] -> IO ()
-collectResults env resultsA 
-    | null resultsA = return ()
-    | otherwise     = do
-        (resultA, result) <- waitAny resultsA
-        printResult env result
-        collectResults env $ filter (/= resultA) resultsA
+collectResults :: [Async Result] -> HackerNewsM ()
+collectResults resultsA = do
+    case resultsA of 
+        [] -> return ()
+        _  -> do (resultA, result) <- liftIO $ waitAny resultsA
+                 printResult result
+                 collectResults $ filter (/= resultA) resultsA
 
-printResult :: Env -> Result -> IO ()
-printResult Env{..} result = case result of 
-    TopStoriesResult titles -> do
-        logResult loggerChan separator
-        logResult loggerChan $ format "TOP {0} HACKER NEWS STORIES" [show numberOfStories]
-        logResult loggerChan separator
-        forM_ titles (logResult loggerChan)
-        logResult loggerChan separator
-        
-    AggregatorResult topNames numberOfComments -> do
-        logResult loggerChan separator
-        logResult loggerChan $ format "TOTAL NUMBER OF COMMENTS FOR THE TOP {0} STORIES" [show numberOfStories]
-        logResult loggerChan separator
-        logResult loggerChan $ show numberOfComments
-        logResult loggerChan separator
-        logResult loggerChan $ format "TOP {0} COMMENTER NAMES FOR THE TOP {1} STORIES" [show numberOfTopNames, show numberOfStories]
-        logResult loggerChan separator
-        forM_ topNames (logResult loggerChan . show)
-        logResult loggerChan separator
+printResult :: Result -> HackerNewsM ()
+printResult result = do 
+    Env{..} <- ask
+    case result of 
+        TopStoriesResult titles -> do
+            logResult separator
+            logResult $ format "TOP {0} HACKER NEWS STORIES" [show numberOfStories]
+            logResult separator
+            forM_ titles logResult
+            logResult separator
+            
+        AggregatorResult topNames numberOfComments -> do
+            logResult separator
+            logResult $ format "TOTAL NUMBER OF COMMENTS FOR THE TOP {0} STORIES" [show numberOfStories]
+            logResult separator
+            logResult $ show numberOfComments
+            logResult separator
+            logResult $ format "TOP {0} COMMENTER NAMES FOR THE TOP {1} STORIES" [show numberOfTopNames, show numberOfStories]
+            logResult separator
+            forM_ topNames (logResult . show)
+            logResult separator
 
 separator :: String 
 separator = replicate 90 '-'
