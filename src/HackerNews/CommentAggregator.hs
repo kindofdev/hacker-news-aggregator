@@ -1,12 +1,13 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE TupleSections     #-}
 
 module HackerNews.CommentAggregator 
     ( commentAggregator ) where
 
 import Control.Concurrent.STM.TChan ( dupTChan, readTChan, writeTChan )
-import Control.Monad.Extra          ( forM_, when, loopM )                           
-import Control.Monad.Reader         ( MonadIO(liftIO), MonadReader(ask) )
+import Control.Monad.Except         ( MonadIO(liftIO), MonadError(throwError) )
+import Control.Monad.Extra          ( forM_, when, loopM )                                     
+import Control.Monad.Reader         ( MonadReader(ask) )         
 import Control.Monad.STM            ( atomically )                        
 import qualified Data.Bifunctor     as Bi
 import Data.List                    ( unfoldr )     
@@ -16,23 +17,26 @@ import Data.PSQueue                 ( PSQ )
 import qualified Data.PSQueue       as PSQ
 import Text.Format                  ( format )         
 
-
 import HackerNews.Logger            ( logDebug, logInfo, logError )
 import HackerNews.Types
-    ( Comment(Comment, cDeleted, cCommentIds, cBy, cId),
-      Env(Env, logLevel, loggerChan, commentResChan, storyResChan,
-          itemReqChan, numberOfTopNames, numberOfStories, numberOfWorkers),
-      HackerNewsM,
-      ItemReq(GetComment),
-      Name,
-      NumberOfComments,
+    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
+          storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
+          numberOfWorkers),
       NumberOfStories,
-      Result(AggregatorResult),
+      Comment(Comment, cDeleted, cCommentIds, cBy, cId),
       Story(Story, sCommentIds, sTotalComments, sBy, sTitle, sId),
-      StoryResChan )
+      NumberOfComments,
+      Name,
+      Result(AggregatorResult),
+      ItemReq(GetComment),
+      StoryResChan,
+      HackerNewsM,
+      Error(ShouldNeverHappen, HackerNewsReturnNullComment) )
+
 
 commentAggregator :: HackerNewsM Result
 commentAggregator = do 
+    logInfo "commentAggregator - Starting ..."
     Env{..}                   <- ask
     storyResChanR             <- liftIO $ atomically $ dupTChan storyResChan
     (topNames, totalComments) <- processComments storyResChanR
@@ -57,7 +61,7 @@ commentAggregator = do
                 return (1, length sCommentIds)
     
     -- Note: This might have been implemented using 'StateT IO a' instead of loopM
-    processComments :: StoryResChan -> HackerNewsM ([(Name, NumberOfComments)], NumberOfComments)
+    processComments :: StoryResChan -> HackerNewsM ([(Name, NumberOfComments)], NumberOfComments)  -- TODO change name 
     processComments storyResChanR  = do
         Env{..} <- ask
         flip loopM (initialAggQueue, 0, 0, 0) $ \(aggQueue, storiesProcessedAcc, pendingCommentsAcc, commentsAcc) -> do
@@ -76,10 +80,10 @@ commentAggregator = do
             mcomment <- liftIO $ atomically $ readTChan commentResChan
 
             when (isNothing mcomment) $ do 
-                let errorMsg = "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request"
-                logError errorMsg
-                logError "commentAggregator - Canceling execution"
-                liftIO $ fail errorMsg
+                -- let errorMsg = "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request"
+                logError "commentAggregator - HackerNews API error : HN returned a NULL value for a comment request"
+                -- logError "commentAggregator - Canceling execution"
+                throwError HackerNewsReturnNullComment
             
             let Comment{..} = fromJust mcomment -- safe
             logDebug $ "commentAggregator - Processing comment: " <> show cId 
@@ -97,12 +101,13 @@ commentAggregator = do
             
             if pendingCommentsAcc' == 0 
                 then do 
-                    when (storiesProcessedAcc' /= numberOfStories) $ 
-                        liftIO $ fail $ "This should not happen: potential bug" 
-                          <> show aggQueue' 
-                          <> show storiesProcessedAcc' 
-                          <> show pendingCommentsAcc' 
-                          <> show commentsAcc'
+                    when (storiesProcessedAcc' /= numberOfStories) $ do
+                        logError $ "commentAggregator - This should not happen: potential bug"
+                            <> show aggQueue' 
+                            <> show storiesProcessedAcc' 
+                            <> show pendingCommentsAcc' 
+                            <> show commentsAcc'
+                        throwError $ ShouldNeverHappen "storiesProcessedAcc' /= numberOfStories" 
 
                     logInfo $ "Number of stories processed: " <> show storiesProcessedAcc'
                     logInfo $ "Number of comments processed: " <> show commentsAcc'

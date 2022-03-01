@@ -1,10 +1,24 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving  #-}
-{-# LANGUAGE OverloadedStrings           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 module HackerNews.Types where
 
-import Control.Monad.Reader         ( MonadIO, unless, ReaderT(..), MonadReader )
 import Control.Concurrent           ( MVar )
 import Control.Concurrent.STM.TChan ( TChan )
+import Control.Exception ( throwIO )
+import Control.Monad.Except
+    ( unless,
+      MonadIO(..),
+      ExceptT,
+      runExceptT,
+      MonadError(throwError) )
+import Control.Monad.Reader          ( asks, MonadReader, ReaderT(..) )
+import Data.Text ( Text )
+import Network.HTTP.Req
+    ( HttpConfig,
+      HttpException(JsonHttpException, VanillaHttpException),
+      MonadHttp(..) )
+
 
 import Data.Aeson
     ( FromJSON(parseJSON),
@@ -17,11 +31,23 @@ import Data.Aeson
 
 -- the monad --
 
-newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env IO a }
-                      deriving (Functor, Applicative, Monad, MonadIO, MonadReader Env)
+data Error = JsonParsingError   
+           | NotFoundStories 
+           | ShouldNeverHappen Text
+           | HackerNewsReturnNullComment 
+           deriving (Eq, Show)
 
-runHackerNewsM :: Env -> HackerNewsM a -> IO a
-runHackerNewsM env m = runReaderT (run m) env
+newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env (ExceptT Error IO) a }
+                      deriving (Functor, Applicative, Monad, MonadIO, MonadReader Env, MonadError Error)
+
+instance MonadHttp HackerNewsM where 
+    handleHttpException ex@VanillaHttpException{} = HackerNewsM $ liftIO $ throwIO ex
+    handleHttpException (JsonHttpException _)     = HackerNewsM $ throwError JsonParsingError
+
+    getHttpConfig       = HackerNewsM $ asks httpConfig               
+
+runHackerNewsM :: Env -> HackerNewsM a -> IO (Either Error a)
+runHackerNewsM env m = runExceptT $ runReaderT (run m) env
 
 
 -- channels --
@@ -116,4 +142,5 @@ data Env = Env
     , commentResChan   :: CommentResChan
     , loggerChan       :: LoggerChan
     , logLevel         :: LogLevel
+    , httpConfig       :: HttpConfig
     }

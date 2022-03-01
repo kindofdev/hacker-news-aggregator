@@ -66,6 +66,7 @@ executable cardashift-challenge
         , async
         , safe-exceptions
         , mtl
+        , req
 
     hs-source-dirs:   app
     default-language: Haskell2010

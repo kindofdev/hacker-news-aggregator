@@ -4,42 +4,39 @@ module HackerNews.TopStoriesManager
     ) where
 
 import Control.Concurrent.STM.TChan ( dupTChan, readTChan, writeTChan )
-import Control.Monad.Extra          ( forM_, when, loopM )               
-import Control.Monad.Reader         ( MonadIO(liftIO), MonadReader(ask) )
+import Control.Monad.Except         ( forM_, when, MonadIO(liftIO) )
+import Control.Monad.Extra          ( loopM )               
+import Control.Monad.Reader         ( MonadReader(ask) )         
 import Control.Monad.STM            ( atomically )
-import Data.Maybe                   ( isJust, isNothing, fromJust)
+import Data.Maybe                   ( isJust )                   
 import Data.List                    ( sort )
 
-import HackerNews.Logger            ( logDebug, logInfo, logWarn, logError )
+import HackerNews.Logger ( logDebug, logInfo, logWarn )            
 import HackerNews.Types
-    ( Env(Env, logLevel, loggerChan, commentResChan, storyResChan,
-          itemReqChan, numberOfTopNames, numberOfStories, numberOfWorkers),
-      HackerNewsM,
-      IndexedStory,
-      ItemReq(GetStory),
-      Result(TopStoriesResult),
+    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
+          storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
+          numberOfWorkers),
       Story(sTitle),
       StoryId,
+      Result(TopStoriesResult),
+      ItemReq(GetStory),
       StoryIndex,
-      StoryResChan )
-
+      IndexedStory,
+      StoryResChan,
+      HackerNewsM )
 import HackerNews.HttpWorker        ( topStories )
 
 type StoryIdsReserve = [(StoryIndex, StoryId)]
 
 topStoriesManager :: HackerNewsM Result
 topStoriesManager = do
+    logInfo "topStoriesManager - Starting ..."
     Env{..}       <- ask
+
     storyResChanR <- liftIO $ atomically $ dupTChan storyResChan
+    storyIds     <- topStories
 
-    mstoryIds     <- liftIO topStories
-    when (isNothing mstoryIds) $ do
-        let errorMsg = "topStoriesManager - No stories obtained: Canceling execution"
-        logError errorMsg
-        liftIO $ fail errorMsg
-
-    let storyIds = fromJust mstoryIds -- safe
-        (storyIdsToCheck, storyIdsReserve) = splitAt numberOfStories storyIds
+    let (storyIdsToCheck, storyIdsReserve) = splitAt numberOfStories storyIds
 
     forM_ storyIdsToCheck $ \(index, itemId) -> liftIO $ atomically $ writeTChan itemReqChan $ GetStory index itemId 
     logDebug $ "topStoriesManager - Triggered initial requests GetStory: " <> show storyIdsToCheck
