@@ -6,113 +6,100 @@ module HackerNews.CommentAggregator
     ( commentAggregator ) where
 
 import Control.Concurrent.STM.TChan ( dupTChan, readTChan, writeTChan )
-import Control.Monad.Except         ( MonadIO(liftIO), MonadError(throwError) )
-import Control.Monad.Extra          ( forM_, when, loopM )                                     
+import Control.Monad.Except         ( MonadIO(liftIO) )         
+import Control.Monad.Extra          ( forM_, loopM )                                          
 import Control.Monad.Reader         ( MonadReader(ask) )         
 import Control.Monad.STM            ( atomically )                        
 import qualified Data.Bifunctor     as Bi
 import Data.List                    ( unfoldr )     
-import Data.Maybe                                  
 import Data.Ord                     ( Down(..) )                       
 import Data.PSQueue                 ( PSQ )                   
 import qualified Data.PSQueue       as PSQ
 import Text.Format                  ( format )         
 
-import HackerNews.Logger            ( logDebug, logInfo, logError )
+import HackerNews.Logger            ( logDebug, logInfo )            
 import HackerNews.Types
-    ( Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
+    ( Comment(Comment, cCommentIds, cBy),
+      Env(Env, httpConfig, logLevel, loggerChan, commentResChan,
           storyResChan, itemReqChan, numberOfTopNames, numberOfStories,
           numberOfHttpClients),
-      NumberOfStories,
-      Comment(Comment, cCommentIds, cBy),
-      Story(Story, sCommentIds, sTotalComments, sBy, sTitle, sId),
-      NumberOfComments,
-      Name,
-      Result(AggregatorResult),
-      ItemReq(GetComment),
-      StoryResChan,
       HackerNewsM,
-      Error(ShouldNeverHappen) )
+      ItemReq(GetComment),
+      Name,
+      NumberOfComments,
+      Result(AggregatorResult),
+      Story(Story, sCommentIds, sId) )
 
 commentAggregator :: HackerNewsM Result
 commentAggregator = do 
     logInfo "commentAggregator - Starting ..."
-    Env{..}                   <- ask
-    storyResChanR             <- liftIO $ atomically $ dupTChan storyResChan
-    (topNames, totalComments) <- getTopNamesAndTotalComments storyResChanR
-    
+    (topNames, totalComments) <- getTopNamesAndTotalComments
     logInfo "commentAggregator - Aggregation done"
     return $ AggregatorResult topNames totalComments
-  where
-    collectCommentsFromStory :: StoryResChan -> HackerNewsM (NumberOfStories, NumberOfComments) 
-    collectCommentsFromStory storyResChanR = do
-        Env{..} <- ask
+
+-- Note: This might have been implemented using 'StateT IO a' instead of loopM
+getTopNamesAndTotalComments :: HackerNewsM ([(Name, NumberOfComments)], NumberOfComments) 
+getTopNamesAndTotalComments = do
+    Env{..}                  <- ask
+    numberOfTopLevelComments <- collectTopLevelCommentsFromStories
+    flip loopM (initialAggQueue, numberOfTopLevelComments, numberOfTopLevelComments) $ \(aggQueue, pendingCommentsAcc, commentsAcc) -> do
+        logDebug $ 
+            format "getTopNamesAndTotalComments - initial: aggQueue size: {0}, pendingCommentsAcc: {1}, commentsAcc: {2}" 
+            [show (PSQ.size aggQueue), show pendingCommentsAcc, show commentsAcc]
+
+        -- Read a comment. 
+        -- Note: There's something wrong on HackerNews API. Sometimes it returns a NULL value as a comment 
+        -- for a valid comment. See a detail explanation in HackerNews.HttpWorker.readComment
+        mcomment <- liftIO $ atomically $ readTChan commentResChan
+        logDebug $ "getTopNamesAndTotalComments - Processing comment: " <> show mcomment 
+
+        -- Update state  
+        let subCommentIds       = maybe [] cCommentIds mcomment
+            commentsAcc'        = succ commentsAcc
+            aggQueue'           = maybe aggQueue (\Comment{cBy} -> updateAggQueue cBy aggQueue) mcomment
+            pendingCommentsAcc' = pendingCommentsAcc + length subCommentIds - 1 
+
+        -- Trigger request GetComment to get the info about comments kids
+        forM_ subCommentIds $ \id_ -> do 
+            liftIO $ atomically $ writeTChan itemReqChan $ GetComment id_ 
+            logDebug $ "getTopNamesAndTotalComments - Triggered request GetComment: " <> show id_
+
+        if pendingCommentsAcc' == 0 
+            then do 
+                logInfo $ "getTopNamesAndTotalComments - Number of stories processed: " <> show numberOfStories 
+                logInfo $ "getTopNamesAndTotalComments - Number of comments processed: " <> show commentsAcc'
+                logInfo $ "getTopNamesAndTotalComments - Number of unique users in comments: " <> show (PSQ.size aggQueue)
+                return $ Right (takeTopNames numberOfTopNames aggQueue, commentsAcc')
+            else do
+                logDebug $ 
+                    format "getTopNamesAndTotalComments - initial: aggQueue size: {0}, pendingCommentsAcc: {1}, commentsAcc: {2}" 
+                    [show (PSQ.size aggQueue'), show pendingCommentsAcc', show commentsAcc']
+                return $ Left (aggQueue', pendingCommentsAcc', commentsAcc')
+
+collectTopLevelCommentsFromStories :: HackerNewsM NumberOfComments
+collectTopLevelCommentsFromStories = do
+    Env{..}       <- ask
+    storyResChanR <- liftIO $ atomically $ dupTChan storyResChan
+    flip loopM (0, 0) $ \(storiesProcessedAcc, commentsAcc) -> do 
         mstory  <- liftIO $ atomically $ readTChan storyResChanR
         case mstory of 
-            Nothing             -> return (0, 0) 
-            Just (_, Story{..}) -> do
+            Nothing                      -> return $ Left (storiesProcessedAcc, commentsAcc) 
+            Just (_, Story{sCommentIds, sId}) -> do
                 forM_ sCommentIds $ liftIO . atomically . writeTChan itemReqChan . GetComment
-                logDebug $ format "commentAggregator - Triggered {0} GetComment requests for story {1}" 
-                           [show sCommentIds, show sId]
+                logDebug $ format "collectTopLevelCommentsFromStories - Collected and triggered {0} top-level comments from story {1}" 
+                            [show sCommentIds, show sId]
+                
+                let storiesProcessedAcc' = succ storiesProcessedAcc
+                    commentsAcc'         = commentsAcc + length sCommentIds
 
-                forM_ sCommentIds $ \cId -> 
-                    logDebug $ "commentAggregator (from story) - Triggered request GetComment: " <> show cId    
-                    
-                return (1, length sCommentIds)
+                if storiesProcessedAcc' == numberOfStories
+                    then do
+                        logInfo $ 
+                            format "collectTopLevelCommentsFromStories - Collected {0} top level comments from the top {1} stories" 
+                            [show commentsAcc', show numberOfStories]
+                        return $ Right commentsAcc' 
+                    else return $ Left (storiesProcessedAcc', commentsAcc')
     
-    -- Note: This might have been implemented using 'StateT IO a' instead of loopM
-    getTopNamesAndTotalComments :: StoryResChan -> HackerNewsM ([(Name, NumberOfComments)], NumberOfComments) 
-    getTopNamesAndTotalComments storyResChanR  = do
-        Env{..} <- ask
-        flip loopM (initialAggQueue, 0, 0, 0) $ \(aggQueue, storiesProcessedAcc, pendingCommentsAcc, commentsAcc) -> do
-            logDebug $ 
-                format "commentAggregator - initial storiesProcessedAcc: {0}, pendingCommentsAcc: {1}, commentsAcc: {2}" 
-                [show storiesProcessedAcc, show pendingCommentsAcc, show commentsAcc]
-            
-            -- Story processing: Get first level comments of top stories and trigger GetComment request to get info about them   
-            (storyProcessed, commentsInStory) <- if storiesProcessedAcc < numberOfStories 
-                then collectCommentsFromStory storyResChanR
-                else return (0, 0)
-
-            -- Read a comment. 
-            -- Note: There's something wrong on HackerNews API. Sometimes it returns a NULL value as a comment 
-            -- for a valid comment. See a detail explanation in HackerNews.HttpWorker.readComment  
-            mcomment <- liftIO $ atomically $ readTChan commentResChan
-            logDebug $ "commentAggregator - Processing comment: " <> show mcomment 
-
-            -- Update state  
-            let commentsAcc'         = if isJust mcomment then succ commentsAcc else commentsAcc
-                subCommentIds        = maybe [] cCommentIds mcomment
-                aggQueue'            = maybe aggQueue (\Comment{cBy} -> updateAggQueue cBy aggQueue) mcomment
-                pendingCommentsAcc'  = pendingCommentsAcc + length subCommentIds + commentsInStory - 1 
-                storiesProcessedAcc' = storiesProcessedAcc + storyProcessed 
-
-            -- Trigger request GetComment to get the info about comments kids
-            forM_ subCommentIds $ \id_ -> do 
-                liftIO $ atomically $ writeTChan itemReqChan $ GetComment id_ 
-                logDebug $ "commentAggregator - Triggered request GetComment: " <> show id_
-
-            if pendingCommentsAcc' == 0 
-                then do 
-                    when (storiesProcessedAcc' /= numberOfStories) $ do
-                        logError $ "commentAggregator - This should not happen: potential bug"
-                            <> show aggQueue' 
-                            <> show storiesProcessedAcc' 
-                            <> show pendingCommentsAcc' 
-                            <> show commentsAcc'
-                        throwError $ ShouldNeverHappen "storiesProcessedAcc' /= numberOfStories" 
-
-                    logInfo $ "Number of stories processed: " <> show storiesProcessedAcc'
-                    logInfo $ "Number of comments processed: " <> show commentsAcc'
-                    logInfo $ "Number of unique users in comments: " <> show (PSQ.size aggQueue)
-                    logInfo "getTopNamesAndTotalComments - Aggregation done :)"
-                    return $ Right (takeTopNames numberOfTopNames aggQueue, commentsAcc')
-                else do
-                    logDebug $ 
-                        format "commentAggregator - final storiesProcessedAcc: {0}, pendingCommentsAcc: {1}, commentsAcc: {2}" 
-                        [show storiesProcessedAcc', show pendingCommentsAcc', show commentsAcc']
-
-                    return $ Left (aggQueue', storiesProcessedAcc', pendingCommentsAcc', commentsAcc')
 
 -- queue -- 
 

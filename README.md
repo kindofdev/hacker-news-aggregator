@@ -13,7 +13,7 @@ This project is not a production-ready one, just an exercise trying to achieve t
 
 My intention with current design has been to play with Haskell concurrency primitives and have fun. 
 
-**Hacker News Bug** :  There's an issue with the API (see below for details). In these cases the program ignores the empty comment and continues. 
+**Hacker News Bug** :  There's an issue with the API (see below for details). In these cases the program ignores the empty comment and continues. ( it increments by 1 the accumulator of comment, however the name of the commenter is ignored )
 
 <br />
 
@@ -71,7 +71,7 @@ Its mission is to collect the top 30 commenter names and count the total comment
 
      For each comment: 
 
-      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments from channel `CommentResChan`, but every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, the program ignores the empty comment and continues. 
+      - Check that the comment collected is valid. Here, there's an issue with **HackerNews API**. The thing is that we expect comments from channel `CommentResChan`, but every now and then the API returns a **NULL** value instead of an object. This behavior is arbitrary and pretty weird because if you execute the program a bit later with exactly same number of comments, **Hacker News API** returns a valid comment object. When this occurs, the program ignores the empty comment and continues. ( it increments by 1 the accumulator of comment, however the name of the commenter is ignored )
 
       - If the comment has sub-comments it triggers requests (`GetComment`) into channel `ItemReqChan`.
 

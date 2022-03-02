@@ -13,7 +13,6 @@ import Control.Monad.Except
       runExceptT,
       MonadError(throwError) )
 import Control.Monad.Reader          ( asks, MonadReader, ReaderT(..) )
-import Data.Text ( Text )
 import Network.HTTP.Req
     ( HttpConfig,
       HttpException(JsonHttpException, VanillaHttpException),
@@ -33,7 +32,6 @@ import Data.Aeson
 
 data Error = JsonParsingError   
            | NotFoundStories 
-           | ShouldNeverHappen Text
            deriving (Eq, Show)
 
 newtype HackerNewsM a = HackerNewsM { run :: ReaderT Env (ExceptT Error IO) a }
